@@ -1,15 +1,37 @@
+#ifndef OVRC_H
+#define OVRC_H
+
+#include <openvpn/openvpn-plugin.h>
+#include <freeradius-client.h>
+
 #include <stdint.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <sched.h>
+#include <malloc.h>
+#include <inttypes.h>
+
+#define ovrc_malloc malloc
+#define ovrc_zalloc(size) calloc(1,(size))
+
+#include "mq.h"
+
+//////////////////////////
+//hash.c
 
 #define H_KEY_MAX 63
 #define H_ERROR -1
 #define H_SUCCESS 0
 #define H_EXISTS 1
 #define H_NOTFOUND 2
+
 #define OVRC_H_TEST 0
+#define OVRC_TASK_TEST 1
+#define OVRC_SERVER_TEST 0
+
 #define catch(T) if(!(T)) goto finally;
 #define assert(T) if(!(T)) goto end;
 
@@ -47,4 +69,9 @@ h_entry *h_get(h_ctx *H,char *key,uint32_t hash);
 h_entry *h_del(h_ctx *H,char *key);
 void h_each_del(h_ctx *H,h_each_cb *f);
 void h_each(h_ctx *H,h_each_cb *f);
+
+//////////////////////////
+
+
+#endif //OVRC_H
 

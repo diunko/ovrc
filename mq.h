@@ -27,6 +27,8 @@ typedef struct {
   mq_M **buf;
   uint32_t rp;
   uint32_t wp;
+  pthread_mutex_t lock;
+  pthread_cond_t cond;
 } mq_Q;
 
 static __inline__
@@ -34,6 +36,8 @@ mq_Q *mq_Q_new(){
   mq_Q *Q=calloc(1,sizeof(mq_Q));
   Q->buf=(mq_M**)memalign(MQ_BUFSIZE,MQ_BUFSIZE*sizeof(void*));
   Q->rp=0;
+  pthread_mutex_init(&Q->lock,NULL);
+  pthread_cond_init(&Q->cond,NULL);
   return Q;
 }
 static __inline__
@@ -109,6 +113,65 @@ mq_M *mq_get(mq_Q*Q){
   }
   return m;
 }
+
+static __inline__
+mq_M *
+mq_wait(mq_Q*Q){
+  mq_M *m;
+  m=mq_get(Q);
+  if(m==NULL){
+    pthread_mutex_lock(&Q->lock);
+    while(!(m=mq_get(Q))){
+      pthread_mutex_cond_wait(&Q->cond,
+                              &Q->lock);
+    }
+    pthread_mutex_unlock(&Q->lock);
+  }
+  return m;
+}
+
+static __inline__ mq_M *
+mq_timed_wait(mq_Q*Q,struct timespec*ti){
+  struct timespec ta;
+  mq_M *m;
+  int res;
+  m=mq_get(Q);
+  if(m==NULL&&ti){
+    res=clock_gettime(CLOCK_REALTIME,&ta);
+    if(res==0){
+      ta.tv_sec+=((ta.tv_nsec+ti->tv_nsec)/1000000000);
+      ta.tv_sec+=ti->tv_sec;
+      ta.tv_nsec=(ta.tv_nsec+ti->tv_nsec)%1000000000;
+      pthread_mutex_lock(&Q->lock);
+      while(!(m=mq_get(Q))){
+        res=pthread_cond_timedwait(&Q->cond,
+                                   &Q->lock,
+                                   &ta);
+        if(res!=0)
+          break;
+      }
+      pthread_mutex_unlock(&Q->lock);
+    }
+  }
+  return m;
+}
+
+static __inline__
+int mq_put_signal(mq_Q*Q,mq_M*m){
+  mq_M *cm;
+  int res_put,res;
+  res_put=mq_put(Q,m);
+  if(res_put==MQ_SUCCESS
+     ||res_put==MQ_ERROR_FULL){
+    res=pthread_mutex_trylock(&Q->lock);
+    if(res==0){
+      pthread_cond_signal(&Q->cond);
+      pthread_mutex_unlock(&Q->lock);
+    }
+  }
+  return res_put;
+}
+
 static __inline__
 int mq_print(mq_Q*Q){
   uint32_t wp=Q->wp,rp=Q->rp;
@@ -142,18 +205,20 @@ typedef struct {
 #define MSGS_TOT NUM_WRITERS*MSGS_PER_WRITER
 #define lfprintf fprintf
 #define rfprintf //fprintf
+#define tprintf fprintf
 
 uint32_t rsleeps=0;
 uint32_t wsleeps=0;
 
-struct timespec w_1us={.tv_sec=0,.tv_nsec=10000};
-struct timespec r_1us={.tv_sec=0,.tv_nsec=1000};
+struct timespec w_1us={.tv_sec=0,.tv_nsec=1000000};
+struct timespec r_1us={.tv_sec=0,.tv_nsec=10000};
 
 mq_Q *gQ;
 mq_M mm[NUM_WRITERS][MSGS_PER_WRITER];
 
 void *writer_proc(void*arg);
 void *reader_proc(void*arg);
+void *reader_wait_proc(void*arg);
 thread_arg writers[NUM_WRITERS];
 thread_arg reader;
 FILE *flog;
@@ -171,7 +236,7 @@ int main(){
   rlog=fopen("rlog","w");
   pthread_create(&reader.thread,
                  NULL,
-                 reader_proc,
+                 reader_wait_proc,
                  (void*)&reader);
   for(i=0;i<NUM_WRITERS;i++){
     writers[i].tid=i;
@@ -193,6 +258,8 @@ int main(){
 void *reader_proc(void*arg){
   int k=0;
   int us=0;
+  int r;
+  struct timespec Xus={.tv_sec=r_1us.tv_sec,.tv_nsec=r_1us.tv_nsec};
   mq_M *m;
   thread_arg *ta=(thread_arg*)arg;
   while(k<MSGS_TOT&&us<1000000*600){
@@ -200,7 +267,34 @@ void *reader_proc(void*arg){
       //fprintf(flog,"no messages yet. sleeping for 1us.\n");
       //fprintf(rlog,".\n");
       //sched_yield();
-      nanosleep(r_1us,NULL);
+      r=nanosleep(&Xus,&Xus);
+      if(r==-1)
+        tprintf(flog,                                                   \
+                "reader nanosleep returned %d, Xus=={.tv_sec:%ld,.tv_nsec:%ld}\n", \
+                r,Xus.tv_sec,Xus.tv_nsec);
+      __sync_addf(&rsleeps,1);
+      us++;
+    }
+    rfprintf(flog,"R %x, %d\n",m->type,k);
+    k++;
+    //fprintf(flog,"R %x, %d\n",m->type,k);
+  }
+  lfprintf(flog,"reader exiting\n");
+  pthread_exit(0);
+}
+
+void *reader_wait_proc(void*arg){
+  int k=0;
+  int us=0;
+  int r;
+  struct timespec Xus={.tv_sec=r_1us.tv_sec,.tv_nsec=r_1us.tv_nsec};
+  mq_M *m;
+  thread_arg *ta=(thread_arg*)arg;
+  while(k<MSGS_TOT&&us<1000000*600){
+    while(!(m=mq_timed_wait(ta->Q,&r_1us))){
+      //fprintf(flog,"no messages yet. sleeping for 1us.\n");
+      //fprintf(rlog,".\n");
+      //sched_yield();
       __sync_addf(&rsleeps,1);
       us++;
     }
@@ -217,14 +311,19 @@ void *writer_proc(void*arg){
   int k;
   int r;
   int mid;
+  struct timespec Xus={.tv_sec=w_1us.tv_sec,.tv_nsec=w_1us.tv_nsec};
   for(k=0;k<MSGS_PER_WRITER;k++){
     mid=0x1000000+0x100000*ta->tid+k;
     mm[ta->tid][k].type=mid;
     while(MQ_ERROR_FULL==
-          (r=mq_put(ta->Q,mm[ta->tid]+k))){
+          (r=mq_put_signal(ta->Q,mm[ta->tid]+k))){
       //      fprintf(flog,"queue overflow. sleeping for 1us.\n");
-      sched_yield();
-      nanosleep(w_1us,NULL);
+      //sched_yield();
+      r=nanosleep(&Xus,&Xus);
+      if(r==-1)
+        tprintf(flog,                                                   \
+                "writer nanosleep returned %d, Xus=={.tv_sec:%ld,.tv_nsec:%ld}\n", \
+                r,Xus.tv_sec,Xus.tv_nsec);
       __sync_addf(&wsleeps,1);
     }
     //    fprintf(flog,"W %x\n",mid);

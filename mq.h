@@ -15,6 +15,7 @@
 
 #define MQ_SUCCESS 0
 #define MQ_ERROR_FULL 1
+#define MQ_ERROR 2
 
 #define _MQ_DO_TEST_ 0
 
@@ -33,8 +34,10 @@ typedef struct {
 
 static __inline__
 mq_Q *mq_Q_new(){
-  mq_Q *Q=calloc(1,sizeof(mq_Q));
-  Q->buf=(mq_M**)memalign(MQ_BUFSIZE,MQ_BUFSIZE*sizeof(void*));
+  mq_Q *Q=ovrc_zalloc(sizeof(mq_Q));
+  size_t bl=MQ_BUFSIZE*sizeof(void*);
+  Q->buf=(mq_M**)memalign(MQ_BUFSIZE,bl);
+  memset(Q->buf,0,bl);
   Q->rp=0;
   pthread_mutex_init(&Q->lock,NULL);
   pthread_cond_init(&Q->cond,NULL);
@@ -47,6 +50,19 @@ void mq_Q_delete(mq_Q*Q){
 }
 
 static __inline__
+mq_M *mq_M_new(uint32_t type,void*data){
+  mq_M*m=ovrc_zalloc(sizeof(mq_M));
+  m->type=type;
+  m->data=data;
+  return m;
+}
+
+static __inline__
+void mq_M_delete(mq_M*m){
+  ovrc_free(m);
+}
+
+static __inline__
 int mq_put(mq_Q*Q,mq_M*m){
   mq_M *cm;
   uint32_t wpl,wpg,wo;
@@ -54,6 +70,13 @@ int mq_put(mq_Q*Q,mq_M*m){
   uint32_t wp=Q->wp;
   uint32_t rp=Q->rp;
   mq_M **buf=Q->buf;
+  __assert(m);
+  ovrc_flog("put message on queue");
+  if(MSG_DUMMY<=m->type
+     &&m->type<=MSG_DUMMY_LAST)
+    ovrc_flogf("%s",MSGS_MAP[m->type]);
+  ovrc_flogf("%p",Q);
+  ovrc_flogf("%p",m);
   while(1){
     writer_epoch=(wp/MQ_BUFSIZE);
     wo=wp%MQ_BUFSIZE;
@@ -79,6 +102,8 @@ int mq_put(mq_Q*Q,mq_M*m){
     }
   }
   return MQ_SUCCESS;
+ end:
+  return MQ_ERROR;
 }
 
 static __inline__
@@ -111,6 +136,14 @@ mq_M *mq_get(mq_Q*Q){
       }
     }
   }
+  if(m){
+    ovrc_flog("got message from queue");
+    if(MSG_DUMMY<=m->type
+       &&m->type<=MSG_DUMMY_LAST)
+      ovrc_flogf("%s",MSGS_MAP[m->type]);
+    ovrc_flogf("%p",Q);
+    ovrc_flogf("%p",m);
+  }
   return m;
 }
 
@@ -142,15 +175,19 @@ mq_timed_wait(mq_Q*Q,struct timespec*ti){
       ta.tv_sec+=((ta.tv_nsec+ti->tv_nsec)/1000000000);
       ta.tv_sec+=ti->tv_sec;
       ta.tv_nsec=(ta.tv_nsec+ti->tv_nsec)%1000000000;
-      pthread_mutex_lock(&Q->lock);
-      while(!(m=mq_get(Q))){
-        res=pthread_cond_timedwait(&Q->cond,
-                                   &Q->lock,
-                                   &ta);
-        if(res!=0)
-          break;
+      res=pthread_mutex_lock(&Q->lock);
+      if(res==0){
+        while(!(m=mq_get(Q))){
+          res=pthread_cond_timedwait(&Q->cond,
+                                     &Q->lock,
+                                     &ta);
+          if(res!=0)
+            break;
+        }
+        pthread_mutex_unlock(&Q->lock);
       }
-      pthread_mutex_unlock(&Q->lock);
+    }else{
+      ovrc_flog("pthread_lock failed");
     }
   }
   return m;
@@ -171,25 +208,6 @@ int mq_put_signal(mq_Q*Q,mq_M*m){
   }
   return res_put;
 }
-
-static __inline__
-int mq_print(mq_Q*Q){
-  uint32_t wp=Q->wp,rp=Q->rp;
-  printf("queue %p, wp %d, rp %d\n",Q,wp,rp);
-  while(wp>rp){
-    fprintf(stderr,"msg id %d\n",Q->buf[rp++]->type);
-  }
-}
-static __inline__
-int mq_dump(mq_Q*Q){
-  uint32_t wp=Q->wp,rp=Q->rp;
-  int i=0;
-  printf("queue %p, wp %d, rp %d\n",Q,wp,rp);
-  for(i=0;i<MQ_BUFSIZE;i++){
-    fprintf(stderr,"msg %p\n",Q->buf[i]);
-  }
-}
-
 
 #if _MQ_DO_TEST_
 

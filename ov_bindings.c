@@ -3,7 +3,7 @@
 OPENVPN_EXPORT openvpn_plugin_handle_t
 openvpn_plugin_open_v1 (unsigned int *type_mask, const char *argv[],
                         const char *envp[]) {
-  plugin_ctx *ctx=ovrc_server_start_cb(argv,envp);
+  ovrc_ctx *ctx=ovrc_server_start_cb(argv,envp);
   *type_mask =
     OPENVPN_PLUGIN_MASK (OPENVPN_PLUGIN_AUTH_USER_PASS_VERIFY) |
     OPENVPN_PLUGIN_MASK (OPENVPN_PLUGIN_CLIENT_CONNECT_V2) |
@@ -41,7 +41,7 @@ openvpn_plugin_client_constructor_v1 (openvpn_plugin_handle_t handle) {
 OPENVPN_EXPORT void
 openvpn_plugin_client_destructor_v1 (openvpn_plugin_handle_t handle,
                                      void *per_client_context) {
-  ovrc_client_desctruct_cb((ovrc_ctx*)handle,
+  ovrc_client_destruct_cb((ovrc_ctx*)handle,
                            (ovrc_cli_ctx*)per_client_context);
 }
 

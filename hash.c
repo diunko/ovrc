@@ -17,22 +17,33 @@ uint32_t h_hash_str(char *key){
   return hash;
 }
 
-char *
-h_key_new_sa(char *keys[]){
+int
+h_buf_sa_copy(char *buf,
+              char *keys[],
+              int buflen){
+  //return number of copied characters
   int i,k,j;
-  int l=H_KEY_MAX;
-  char buf[H_KEY_MAX+1];
-  int rem=H_KEY_MAX;
+  int l=buflen-1;
+  int rem=l;
   for(i=0,j=0;j<l&&keys[i];i++){
     for(k=0;j<l&&keys[i][k];){
       buf[j++]=keys[i][k++];
     }
   }
   buf[j]=(char)0;
-  char *key=ovrc_malloc(j+1);
-  memcpy(key,buf,j+1);
+  return j;
+}
+
+char *
+h_key_new_sa(char *keys[]){
+  char buf[H_KEY_MAX+1];
+  int l;
+  l=h_buf_sa_copy(buf,keys,H_KEY_MAX+1);
+  char *key=ovrc_malloc(l+1);
+  memcpy(key,buf,l+1);
   return key;
 }
+
 void
 h_key_delete(char*key){
   free(key);
@@ -64,9 +75,9 @@ h_delete(h_ctx *H){
 h_entry *
 h_entry_new_kp(char *key,void *data){
   h_entry *he=NULL;
-  assert(key);
+  __assert(key);
   int l=strnlen(key,H_KEY_MAX);
-  assert(l);
+  __assert(l);
   he=ovrc_zalloc(sizeof(h_entry));
   he->hash=h_hash_str(key);
   he->key=key;
@@ -78,9 +89,9 @@ h_entry_new_kp(char *key,void *data){
 h_entry *
 h_entry_new(char *key,void *data){
   h_entry *he=NULL;
-  assert(key);
+  __assert(key);
   int l=strnlen(key,H_KEY_MAX);
-  assert(l);
+  __assert(l);
   char *key_l=ovrc_malloc(l+1);
   strncpy(key_l,key,l);
   key_l[l]=(char)0;
@@ -109,14 +120,14 @@ h_find_nolock(h_ctx *H,
   //of pointer to entry being searched,
   //or to NULL, if key is not found
   h_entry **pphe=NULL;
-  assert(H);
-  assert(key);
+  __assert(H);
+  __assert(key);
   hash=hash?hash:h_hash_str(key);
   int l=strnlen(key,H_KEY_MAX);
   for(pphe=H->table+hash%H->size;
       *pphe!=NULL;
       pphe=&((*pphe)->next)){
-    assert((*pphe)->key);
+    __assert((*pphe)->key);
     if((*pphe)->hash==hash)
       if(strncmp((*pphe)->key,key,l)==0)
         break;
@@ -129,9 +140,9 @@ int
 h_ins(h_ctx *H,h_entry *phe){
   h_entry **pphe;
   int res=H_ERROR;
-  assert(H);
-  assert(phe);
-  assert(phe->next==NULL);
+  __assert(H);
+  __assert(phe);
+  __assert(phe->next==NULL);
   pthread_mutex_lock(&(H->lock));
     pphe=h_find_nolock(H,phe->key,phe->hash);
     if(
@@ -163,11 +174,30 @@ h_ins(h_ctx *H,h_entry *phe){
 h_entry *
 h_get(h_ctx *H,char *key,uint32_t hash){
   h_entry **pphe=NULL,*phe=NULL;
-  assert(H);
-  assert(key);
+  __assert(H);
+  __assert(key);
   pthread_mutex_lock(&(H->lock));
     pphe=h_find_nolock(H,key,hash);
-    catch(pphe);
+    __catch(pphe);
+    phe=*pphe;
+ finally:
+  pthread_mutex_unlock(&(H->lock));
+ end:
+  return phe;
+}
+
+h_entry *
+h_get_sa(h_ctx *H,char *keys[]){
+  char buf[H_KEY_MAX+1];
+  h_entry **pphe=NULL,*phe=NULL;
+  uint32_t hash;
+  __assert(H);
+  __assert(keys);
+  h_buf_sa_copy(buf,keys,H_KEY_MAX+1);
+  hash=h_hash_str(buf);
+  pthread_mutex_lock(&(H->lock));
+    pphe=h_find_nolock(H,buf,hash);
+    __catch(pphe);
     phe=*pphe;
  finally:
   pthread_mutex_unlock(&(H->lock));
@@ -178,12 +208,12 @@ h_get(h_ctx *H,char *key,uint32_t hash){
 h_entry *
 h_del(h_ctx *H,char *key){
   h_entry *phe=NULL,**pphe=NULL;
-  assert(H);
-  assert(key);
+  __assert(H);
+  __assert(key);
   uint32_t hash=h_hash_str(key);
   pthread_mutex_lock(&(H->lock));
     pphe=h_find_nolock(H,key,hash);
-    catch(pphe);
+    __catch(pphe);
     if((*pphe)->hash==hash)
       if(strcmp((*pphe)->key,key)==0){
         phe=*pphe;
@@ -197,8 +227,8 @@ h_del(h_ctx *H,char *key){
 }
 
 void h_each_del(h_ctx *H,h_each_cb *f){
-  assert(H);
-  assert(f);
+  __assert(H);
+  __assert(f);
   pthread_mutex_lock(&(H->lock));
     int i,ti;
     h_entry *phe=NULL,**pphe=NULL,*nphe=NULL;
@@ -222,8 +252,8 @@ void h_each_del(h_ctx *H,h_each_cb *f){
 }
 
 void h_each(h_ctx *H,h_each_cb *f){
-  assert(H);
-  assert(f);
+  __assert(H);
+  __assert(f);
   pthread_mutex_lock(&(H->lock));
     int i,ti;
     h_entry **pphe=NULL;
@@ -376,7 +406,6 @@ int test3(){
     (char *[]){"16ssodijlkajdflkans",",","ldfannewi",",","nqpoier",",","qiwumr",0},
     (char *[]){"17ssodijlkajdflkans",",","ldfannewi",",","nqpoier",",","qiwumr",0},
     (char *[]){"18ssodijlkajdflkans",",","ldfannewi",",","nqpoier",",","qiwumr",0},
-    (char *[]){"19ssodijlkajdflkans",",","ldfannewi",",","nqpoier",",","qiwumr",0},
     (char *[]){"20ssodijlkajdflkans",",","ldfannewi",",","nqpoier",",","qiwumr",0},
     (char *[]){"21ssodijlkajdflkans",",","ldfannewi",",","nqpoier",",","qiwumr",0},
     (char *[]){"23ssodijlkajdflkans",",","ldfannewi",",","nqpoier",",","qiwumr",0},

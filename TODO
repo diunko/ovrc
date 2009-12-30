@@ -1,0 +1,14 @@
+1.do basic authentication
+2.handle disconnect
+
+3.start accounting on connect
+4.stop accounting on disconnect
+
+5.interim update on timeout
+6.management task
+7.kill connection on "Client-Disconnect" accounting reply
+
+8.create user-config-file on auth with framed-address,framed-route,framed-netmask
+9.apply system routes from auth response
+10.on auth create temporary auth response file, delete on disconnect
+
